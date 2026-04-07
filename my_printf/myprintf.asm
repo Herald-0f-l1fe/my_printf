@@ -69,11 +69,6 @@ my_printf:
     ; Прыгаю по адресу: jump_table + (rax * 8)
     jmp [jump_table + rax * 8]
 
-.print_int:
-    ; Логика для %d
-    inc r12
-    jmp .scan_loop
-
 .print_string:
     ; Логика для %s
     inc r12
@@ -87,6 +82,54 @@ my_printf:
     inc r12
     jmp .scan_loop
 
+.print_bin:
+    mov rcx, 2          ; Основание системы счисления
+    jmp .prepare_number
+
+.print_oct:
+    mov rcx, 8
+    jmp .prepare_number
+
+.print_int:
+    mov rax, [arg_storage + r13*8]
+    inc r13
+    
+    ; Проверяю знаковый бит (MSB)
+    test rax, rax
+    jns .unsigned_prepare    ; Если число >= 0, иду как обычно
+
+    ; Если число отрицательное:
+    neg rax                  ; Делаю число положительным (rax = -rax)
+    
+    ; Сохраняю rax, так как вывод знака может его затронуть
+    push rax
+    mov rdi, [buf_ptr]
+    mov byte [rdi], '-'      ; Пишу минус в буфер
+    inc qword [buf_ptr]
+    pop rax
+
+.unsigned_prepare:
+    mov rcx, 10              ; Основание 10
+    call convert_number
+    inc r12
+    jmp .scan_loop
+
+
+.print_hex:
+    mov rcx, 16
+    jmp .prepare_number
+
+.prepare_number:
+    ; Достаю текущий аргумент по индексу R13
+    mov rax, [arg_storage + r13*8]
+    inc r13             ; Перехожу к следующему аргументу для будущего спецификатора
+    
+    ; Теперь вызываю функцию конвертации (передаем число в RAX, базу в RCX)
+    call convert_number
+    
+    inc r12             ; Пропускаю символ спецификатора в форматной строке
+    jmp .scan_loop      ; Возвращаюсь в основной цикл
+
 .default_case:
     ; Если встретил неизвестный символ после % (напр. %z)
     ; Просто печатаю его или игнорируем
@@ -95,16 +138,60 @@ my_printf:
 
 
 
+
 .done:
     ; (Тут код финального вывода буфера через syscall write)
 
-    ; Восстанавливаем сохраненные регистры в обратном порядке
+    ; Восстанавливаю сохраненные регистры в обратном порядке
     pop r15
     pop r14
     pop r13
     pop r12
     
     pop rbp
+    ret
+
+
+convert_number:
+    ; Сохраняю регистры
+    push rbx
+    push rdx
+    
+    mov rdi, num_buffer + 63 ; Начинаю с конца временного буфера
+    mov rbx, rcx             ; В RBX — основание (делитель)
+
+.conv_loop:
+    xor rdx, rdx
+    div rbx                  ; RAX / RBX, остаток в RDX
+    
+    ; Превращаю остаток в символ из HEX_CHARS
+    movzx rdx, byte [HEX_CHARS + rdx]
+    mov [rdi], dl            ; Записываю символ в num_buffer
+    dec rdi                  ; Сдвигаюсь влево
+    
+    test rax, rax            ; Число закончилось?
+    jnz .conv_loop
+
+    ; Теперь копирую из num_buffer в основной buffer
+    ; rdi сейчас указывает на байт перед первым символом числа
+    inc rdi                  ; Указываю на первый символ
+    
+.copy_to_main:
+    ; Вычисляю, сколько байт копировать
+    mov rcx, (num_buffer + 64)
+    sub rcx, rdi             ; RCX = количество символов числа
+    
+    mov rsi, rdi             ; Откуда (num_buffer)
+    mov rdi, [buf_ptr]       ; Куда (основной буфер)
+    
+    push rcx                 ; Сохраняю длину для обновления buf_ptr
+    rep movsb                ; Копирую RCX байт
+    pop rcx
+    
+    add [buf_ptr], rcx       ; Обновляю курсор основного буфера
+    
+    pop rdx
+    pop rbx
     ret
 
 section .data
@@ -128,6 +215,12 @@ section .data
             dq .print_float
         %elif i == '%'
             dq .print_percent
+        %elif i == 'b'
+            dq .print_bin    ; Двоичная
+        %elif i == 'o'
+            dq .print_oct    ; Восьмеричная
+        %elif i == 'x'
+            dq .print_hex    ; Шестнадцатеричная
         %else
             dq .default_case
         %endif
@@ -143,13 +236,13 @@ section .bss
     ; Указатель на текущую свободную позицию в буфере
     buf_ptr       resq 1
 
-    ; Временный буфер для конвертации ОДНОГО числа (макс ~64 символа для двоичной системы)
-    ; Мы сначала пишем число сюда (задом наперед), а потом копируем в основной буфер
+    ; Временный буфер для конвертации числа (макс ~64 символа для двоичной системы)
+    ; Сначала пишу число сюда (задом наперед), а потом копирую в основной буфер
     num_buffer    resb 64
 
     ; Место для хранения всех целочисленных аргументов из регистров (RSI, RDX, RCX, R8, R9)
-    ; Мы сохраним их сюда в начале функции, чтобы обращаться как к массиву
+    ; Я сохраняю их сюда в начале функции, чтобы обращаться как к массиву
     arg_storage   resq 5
 
-    ; Место для хранения XMM регистров (8 штук по 16 байт), если решим парсить float
+    ; Место для хранения XMM регистров (8 штук по 16 байт)
     xmm_storage   resb 128
