@@ -71,9 +71,8 @@ my_printf:
 
 .print_string:
     ; 1. Достаем адрес строки из аргументов
-    mov rsi, [arg_storage + r13*8]
-    inc r13
-    
+    call get_argument
+
     ; 2. Проверяем, не пришел ли NULL (защита от падения)
     test rsi, rsi
     jnz .string_copy_loop
@@ -115,8 +114,7 @@ my_printf:
     jmp .prepare_number
 
 .print_int:
-    mov rax, [arg_storage + r13*8]
-    inc r13
+
     
     ; Проверяю знаковый бит (MSB)
     test rax, rax
@@ -144,10 +142,7 @@ my_printf:
     jmp .prepare_number
 
 .prepare_number:
-    ; Достаю текущий аргумент по индексу R13
-    mov rax, [arg_storage + r13*8]
-    inc r13             ; Перехожу к следующему аргументу для будущего спецификатора
-    
+    call get_argument    
     ; Теперь вызываю функцию конвертации (передаем число в RAX, базу в RCX)
     call convert_number
     
@@ -159,8 +154,6 @@ my_printf:
     ; Просто печатаю его или игнорируем
     inc r12
     jmp .scan_loop
-
-
 
 
 .done:
@@ -176,7 +169,7 @@ my_printf:
     ret
 
 
-convert_number:
+convert_number proc
     ; Сохраняю регистры
     push rbx
     push rdx
@@ -217,6 +210,36 @@ convert_number:
     pop rdx
     pop rbx
     ret
+convert_number endp
+
+get_argument proc
+    ; Вход: R13 (счетчик аргументов, начиная с 0)
+    ; Выход: RAX (значение аргумента)
+    
+    cmp r13, 5          ; Мы уже использовали все 5 регистров (RSI, RDX, RCX, R8, R9)?
+    jl .from_storage    ; Если нет, берем из нашего массива в .bss
+
+    ; --- Берем из стека ---
+    ; Первый аргумент в стеке лежит по адресу [rbp + 16]
+    ; r13 = 5 должен соответствовать [rbp + 16]
+    ; r13 = 6 должен соответствовать [rbp + 24]
+    ; Формула: [rbp + 16 + (r13 - 5) * 8]
+    
+    mov rax, r13        ; копируем индекс
+    sub rax, 5          ; вычитаем 5
+    shl rax, 3          ; умножаем на 8 (сдвиг на 3 бита влево)
+    add rax, 16         ; прибавляем смещение
+    mov rax, [rbp + rax] ; достаем значение из стека
+    jmp .arg_found
+
+.from_storage:
+    mov rax, [arg_storage + r13 * 8]
+
+.arg_found:
+    inc r13             ; Готовим индекс для следующего вызова
+    ret
+get_argument endp
+
 
 section .data
     ; Константы для системного вызова write (Linux x64)
