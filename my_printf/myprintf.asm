@@ -70,9 +70,33 @@ my_printf:
     jmp [jump_table + rax * 8]
 
 .print_string:
-    ; Логика для %s
-    inc r12
-    jmp .scan_loop
+    ; 1. Достаем адрес строки из аргументов
+    mov rsi, [arg_storage + r13*8]
+    inc r13
+    
+    ; 2. Проверяем, не пришел ли NULL (защита от падения)
+    test rsi, rsi
+    jnz .string_copy_loop
+    mov rsi, .null_str       ; Если NULL, подменяем на "(null)"
+
+.string_copy_loop:
+    mov al, [rsi]            ; Читаем байт из строки-аргумента
+    test al, al              ; Конец строки-аргумента?
+    jz .string_done
+
+    ; 3. Пишем в наш основной буфер
+    mov rdi, [buf_ptr]
+    mov [rdi], al
+    inc qword [buf_ptr]
+    
+
+    inc rsi                  ; К следующему символу аргумента
+    jmp .string_copy_loop
+
+.string_done:
+    inc r12                  ; Пропускаем 's' в форматной строке
+    jmp .scan_loop           ; Возвращаемся к парсингу формата
+
 
 .print_percent:
     ; Логика для %%
@@ -99,7 +123,7 @@ my_printf:
     jns .unsigned_prepare    ; Если число >= 0, иду как обычно
 
     ; Если число отрицательное:
-    neg rax                  ; Делаю число положительным (rax = -rax)
+    abs rax                  ; Делаю число положительным (rax = -rax)
     
     ; Сохраняю rax, так как вывод знака может его затронуть
     push rax
@@ -201,7 +225,7 @@ section .data
 
     ; Таблица символов для перевода чисел в разные системы счисления (10, 16, 2)
     HEX_CHARS     db "0123456789abcdef"
-
+    .null_str db "(null)", 0
     align 8
 
     jump_table:
