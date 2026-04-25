@@ -1,6 +1,6 @@
 section .text
 global my_printf
-
+extern printf
 my_printf:
     push rbp
     mov rbp, rsp
@@ -13,14 +13,16 @@ my_printf:
     mov    [buf_ptr], rax
 
     ; Сохраняю аргументы из регистров в .bss 
+    mov [orig_format_ptr],  rdi
     mov [arg_storage],      rsi
     mov [arg_storage + 8],  rdx
     mov [arg_storage + 16], rcx
     mov [arg_storage + 24], r8
     mov [arg_storage + 32], r9
 
-    test al, al
-    jz .skip_xmm
+    
+    ; test al, al
+    ; jz .skip_xmm
 
     movsd [xmm_storage],       xmm0
     movsd [xmm_storage + 8],   xmm1
@@ -41,7 +43,8 @@ my_printf:
 .scan_loop:
     movzx rax, byte [r12]   
     test al, al             
-    jz .flush_and_exit      
+    jz .flush_and_exit     
+    
 
     cmp al, '%'             
     je .handle_specifier    
@@ -140,7 +143,7 @@ my_printf:
     sub     rsp, 16
     movsd   [rsp], xmm0
 
-    ; Проверяю знак числа
+    ; Проверяю зна  к числа
     movmskpd eax, xmm0
     test eax, eax
     jz     .positive
@@ -227,15 +230,16 @@ my_printf:
 
 
 .flush_and_exit:
-    call flush_buffer   
+    call flush_buffer
+    call restore_regs   
     pop r15
     pop r14
     pop r13
     pop r12
     pop rbx
     pop rbp
-    ret
-
+    jmp printf wrt ..plt  ; wrt ..plt нужно для динамической линковки (PIC)
+    
 
 
 convert_number:
@@ -301,14 +305,22 @@ flush_buffer:
     mov qword [buf_ptr], buffer
     ret
 
+restore_regs:
+    mov rdi, [orig_format_ptr]
+    mov rsi, [arg_storage]
+    mov rdx, [arg_storage + 8 ]
+    mov rcx, [arg_storage + 16]
+    mov r8,  [arg_storage + 24]
+    mov r9,  [arg_storage + 32]
 
-
-
-
-
-
-
-
+    movsd xmm0, [xmm_storage]
+    movsd xmm1, [xmm_storage +  8]  
+    movsd xmm2, [xmm_storage + 16]  
+    movsd xmm3, [xmm_storage + 24]  
+    movsd xmm4, [xmm_storage + 32]  
+    movsd xmm5, [xmm_storage + 40]  
+    movsd xmm6, [xmm_storage + 48]  
+    movsd xmm7, [xmm_storage + 56]  
 
 section .data
     align 8
@@ -360,6 +372,7 @@ section .bss
     BUF_SIZE      equ 4096
     buffer        resb BUF_SIZE
     
+    
     ; Указатель на текущую свободную позицию в буфере
     buf_ptr       resq 1
 
@@ -372,3 +385,6 @@ section .bss
 
     ; Место для хранения XMM регистров (8 штук по 8 байт)
     xmm_storage   resb 64
+
+    ; Данные для callback 
+    orig_format_ptr resq 1
